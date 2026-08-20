@@ -45,11 +45,20 @@ class ClaudeCliAdapter extends LlmAdapter {
 
   async *stream(options) {
     const { command, timeoutMs, cwd, extraArgs } = this.options;
+    // `claude -p` is itself an agent: left alone it runs ITS OWN tool loop with
+    // ITS OWN MCP servers, ignoring the tool schemas dsh passed us. That produces
+    // confusing "Claude requested permissions to use mcp__..." failures inside a
+    // dsh turn. So by default we strip Claude's tooling and use it as a pure
+    // reasoning/text tier; dsh's own runtime (DeepSeek et al) owns tool execution.
+    const isolate = options.isolateTools
+      ? ['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']
+      : [];
     const args = [
       '-p',
       '--output-format', 'stream-json',
       '--verbose',                       // required with -p + stream-json
       '--model', options.model,
+      ...isolate,
       ...extraArgs,
     ];
 
@@ -101,6 +110,7 @@ export function resolveOptions(config = {}) {
     command: config.command ?? 'claude',
     timeoutMs: config.timeoutMs ?? 600_000,
     cwd: config.cwd ?? '',
+    isolateTools: config.isolateTools ?? true,
     extraArgs: config.extraArgs ?? [],
     models: config.models?.length ? config.models : DEFAULT_MODELS,
   };

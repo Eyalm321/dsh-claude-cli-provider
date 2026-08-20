@@ -88,8 +88,18 @@ in `settings.yaml`, or run the profile under its own `DSH_HOME`.
   prompt. Multi-turn context is replayed, not resumed, so long conversations re-send history.
 - **Block-level, not token-level streaming.** The CLI emits whole content blocks; each becomes one
   delta. Output appears in chunks, not character-by-character.
-- **Tool calls are surfaced but the CLI runs its own tools.** Treat this provider as a text/reasoning
-  tier; let dsh's own tool loop own execution.
+- **This is a reasoning tier, not a tool-executing tier — by design.**
+  `claude -p` is itself an agent: given tools it runs *its own* loop with *its own* MCP servers and
+  permission prompts, ignoring the schemas dsh passed. Inside a dsh turn that shows up as
+  `Claude requested permissions to use mcp__…, but you haven't granted it yet` and no result.
+  So this plugin defaults to **`isolateTools: true`**, passing
+  `--strict-mcp-config --mcp-config '{"mcpServers":{}}'` to strip Claude's tooling.
+  Use Claude to plan, review, and decide; let dsh's native runtime (DeepSeek et al.) execute — it
+  drives dsh's MCP, memory, and agent-team tools correctly. Set `isolateTools: false` only if you
+  actually want Claude Code's own agent behaviour inside the turn.
+- **Claude brings its own context.** The CLI loads your `~/.claude/CLAUDE.md`, output style, and
+  memory dir. That is usually helpful, occasionally surprising (it may follow *its* memory
+  conventions rather than dsh's).
 - Requires a logged-in `claude` CLI on the same host (`claude setup-token` / `/login`).
 
 ## Test
