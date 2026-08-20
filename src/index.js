@@ -15,6 +15,8 @@ export const name = 'claude-cli-provider';
 export const inject = ['llm'];
 
 export const PROVIDER = 'claude-cli';
+export const SETTINGS_NS = 'llm-claude-cli';
+export const SETTINGS_NS = 'llm-claude-cli';
 
 const DEFAULT_MODELS = [
   { id: 'claude-opus-5[1m]', name: 'Claude Opus 5 (1M context)', contextWindow: 1_000_000 },
@@ -109,8 +111,15 @@ export function apply(ctx, config) {
   const options = resolveOptions(config);
   const adapter = new ClaudeCliAdapter(options);
 
+  // Shape is fixed by dsh-llm's commit(): provider/displayName/settingsNs/settingsPath,
+  // each non-empty. (Not {id,name,models} — that throws INVALID_DIRECTORY.)
   ctx.llm.registerConfigurableProviders?.([
-    { id: PROVIDER, name: 'Claude (local CLI, subscription)', models: options.models.map((m) => m.id) },
+    {
+      provider: PROVIDER,
+      displayName: 'Claude (local CLI, subscription)',
+      settingsNs: SETTINGS_NS,
+      settingsPath: [],
+    },
   ]);
   ctx.llm.registerAdapter([PROVIDER], adapter);
 }

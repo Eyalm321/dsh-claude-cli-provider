@@ -37,6 +37,21 @@ dsh plugin --profile <name> add dsh-claude-cli-provider
 | `cwd` | process cwd | working directory for the CLI |
 | `extraArgs` | `[]` | extra flags passed through |
 
+
+## Gotcha: settings precedence
+
+`$DSH_HOME/settings.yaml` (the **user layer**) overrides a profile's `cordis.patch.yml`. If your
+settings pin `agent-default-model` to another provider, your profile patch is ignored and you'll get a
+misleading `TRANSPORT: Connection error` from *that* provider — not from this plugin. Either set
+
+```yaml
+agent-default-model:
+  provider: claude-cli
+  model: claude-fable-5
+```
+
+in `settings.yaml`, or run the profile under its own `DSH_HOME`.
+
 ## Limits (known, deliberate)
 
 - **One-shot per request.** `claude -p` is non-interactive: messages are flattened into a single
