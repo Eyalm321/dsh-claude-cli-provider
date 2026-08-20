@@ -27,6 +27,36 @@ dsh plugin --profile <name> add dsh-claude-cli-provider
 
 `cordis.patch.yml` inserts the plugin; it registers provider id **`claude-cli`**.
 
+
+## Installing into a profile
+
+The profile's `package.json` takes the dependency; `cordis.patch.yml` inserts the plugin:
+
+```jsonc
+// $DSH_HOME/profiles/<name>/package.json
+{ "dependencies": { "dsh-claude-cli-provider": "file:/abs/path/to/dsh-claude-cli-provider" },
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"] } } }
+```
+
+```yaml
+# $DSH_HOME/profiles/<name>/cordis.patch.yml
+- insert:
+    - id: claude-cli-provider
+      name: 'dsh-claude-cli-provider'
+      config: { command: /usr/local/bin/claude, timeoutMs: 300000 }
+- id: agent-default-model
+  config: { provider: claude-cli, model: claude-fable-5 }
+```
+
+Then `pnpm install --dir .` in the profile and `dsh --profile <name> "..."`.
+
+**Use an absolute `file:` path.** A relative one resolves against the profile directory and breaks the
+moment the profile moves — you get `Cannot find package 'dsh-claude-cli-provider'`.
+
+**Never vendor a stub of `@deepseek-ai/dsh-llm` into this package.** `LlmAdapter` must resolve to the
+real base class; a stub silently drops inherited methods and you get
+`adapter.providerRetryPolicy is not a function` at plugin load.
+
 ## Config
 
 | key | default | meaning |
