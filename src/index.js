@@ -16,7 +16,6 @@ export const inject = ['llm'];
 
 export const PROVIDER = 'claude-cli';
 export const SETTINGS_NS = 'llm-claude-cli';
-export const SETTINGS_NS = 'llm-claude-cli';
 
 const DEFAULT_MODELS = [
   { id: 'claude-opus-5[1m]', name: 'Claude Opus 5 (1M context)', contextWindow: 1_000_000 },
