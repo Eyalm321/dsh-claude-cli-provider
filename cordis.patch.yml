@@ -1,0 +1,3 @@
+- insert:
+    - id: claude-cli-provider
+      name: 'dsh-claude-cli-provider'
