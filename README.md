@@ -74,9 +74,16 @@ rather than a fix that is missing.
 |---|---|---|
 | `command` | `claude` | path to the CLI |
 | `models` | opus-5[1m], opus-5, sonnet-5, fable-5 | exposed models |
-| `timeoutMs` | `600000` | hard kill for a stuck run |
+| `timeoutMs` | `600000` | **idle** timeout: ms with no output before the CLI is killed |
 | `cwd` | process cwd | working directory for the CLI |
 | `extraArgs` | `[]` | extra flags passed through |
+
+`timeoutMs` is not a ceiling on how long a turn may run. The timer is re-armed on every byte the
+CLI writes to stdout, so a turn that keeps streaming never expires however long it takes, while
+one that has genuinely hung is killed after `timeoutMs` of silence. It was an absolute wall until
+0.2.0, which killed healthy 10-minute agentic turns mid-stream and discarded their output. When
+the kill is ours the error says so, with the duration:
+`claude CLI killed after 600s with no output (idle timeout)`.
 
 
 ## Gotcha: settings precedence

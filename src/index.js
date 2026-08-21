@@ -96,18 +96,41 @@ class ClaudeCliAdapter extends LlmAdapter {
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += String(d); });
 
-    const timer = timeoutMs
-      ? setTimeout(() => child.kill('SIGKILL'), timeoutMs)
-      : undefined;
+    // `timeoutMs` is an IDLE timeout, not a wall on the whole turn: the timer is re-armed on
+    // every byte the child writes to stdout, so a turn that is still streaming is never killed
+    // however long it runs, while one that has genuinely hung still is.
+    //
+    // It was an absolute wall until 2026-08-21, when a healthy agentic turn was SIGKILLed at
+    // exactly 600s mid-stream. Chunks had been arriving right up to the kill (11:50:38,
+    // 11:52:21, 11:52:50, and one as it died at 11:54:10) and every token it had produced was
+    // discarded, surfacing to the user as `claude CLI exited null`.
+    let killedIdle = false;
+    let timer;
+    const idleLabel = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`;
+    const rearm = () => {
+      if (!timeoutMs) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        killedIdle = true;
+        trace(`idle timeout: no stdout for ${idleLabel}, killing`);
+        child.kill('SIGKILL');
+      }, timeoutMs);
+    };
+
+    // readline is created here, and the raw progress listener attached in the same tick, so
+    // stdout is never resumed before readline is listening. Attaching the listener first would
+    // put the stream in flowing mode and lose the head of the turn.
+    const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    child.stdout.on('data', rearm);
+    rearm();
 
     // one-shot prompt on stdin, then EOF
     const described = describeImages(media.files, media.failed);
     child.stdin.end(renderPrompt(options.messages, options.system) + (described ? `\n\n${described}` : ''));
 
-    const exited = new Promise((resolve) => child.on('close', (code) => resolve(code)));
+    const exited = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal })));
 
     try {
-      const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
       for await (const line of rl) {
         const trimmed = line.trim();
         if (!trimmed || trimmed[0] !== '{') continue;
@@ -117,15 +140,25 @@ class ClaudeCliAdapter extends LlmAdapter {
         for (const chunk of translateEvent(event, state)) { trace(`emit ${chunk.type}`); yield chunk; }
       }
 
-      const code = await exited;
+      const { code, signal } = await exited;
+      // Our own kill is named as such, with the idle duration. Anything else (including a
+      // SIGKILL from outside this process) reports the raw exit and must not be dressed up as
+      // a timeout, or a crash gets misdiagnosed as a slow turn.
+      if (killedIdle) {
+        throw new Error(
+          `claude CLI killed after ${idleLabel} with no output (idle timeout)` +
+            (stderr ? `: ${stderr.slice(-500)}` : ''),
+        );
+      }
       if (state.errorText) throw new Error(`claude CLI: ${state.errorText}`);
       if (code !== 0) {
-        throw new Error(`claude CLI exited ${code}${stderr ? `: ${stderr.slice(-500)}` : ''}`);
+        const how = `${code}${signal ? ` (signal ${signal})` : ''}`;
+        throw new Error(`claude CLI exited ${how}${stderr ? `: ${stderr.slice(-500)}` : ''}`);
       }
       for (const chunk of finalChunks(state)) yield chunk;
     } finally {
       await media.cleanup();
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
       if (child.exitCode === null) child.kill('SIGKILL');
     }
   }
@@ -134,6 +167,8 @@ class ClaudeCliAdapter extends LlmAdapter {
 export function resolveOptions(config = {}) {
   return {
     command: config.command ?? 'claude',
+    // Idle timeout: milliseconds with no stdout from the CLI before it is killed. Not a
+    // ceiling on turn duration, since a streaming turn may run indefinitely.
     timeoutMs: config.timeoutMs ?? 600_000,
     cwd: config.cwd ?? '',
     isolateTools: config.isolateTools ?? true,
