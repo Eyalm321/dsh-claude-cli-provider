@@ -11,7 +11,7 @@ import { collectImages, materialise, describeImages } from './images.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 import { createInterface } from 'node:readline';
-import { LlmAdapter } from '@deepseek-ai/dsh-llm';
+import { LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm';
 import { translateEvent, finalChunks, renderPrompt } from './translate.js';
 
 export const name = 'claude-cli-provider';
@@ -105,6 +105,15 @@ class ClaudeCliAdapter extends LlmAdapter {
     // exactly 600s mid-stream. Chunks had been arriving right up to the kill (11:50:38,
     // 11:52:21, 11:52:50, and one as it died at 11:54:10) and every token it had produced was
     // discarded, surfacing to the user as `claude CLI exited null`.
+    // Stop has to reach the subprocess. The harness cancels a turn by aborting the adapter's
+    // signal, and `claude -p` is a child process that knows nothing about it: without this the
+    // harness stops listening while the child runs on, spending tokens on output nobody reads
+    // and holding the session busy. Pressing Stop looked like it did nothing because, outside
+    // the harness, nothing had changed.
+    const signal = options.signal;
+    let aborted = signal?.aborted === true;
+    let onAbort;
+
     let killedIdle = false;
     let timer;
     const idleLabel = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`;
@@ -121,6 +130,16 @@ class ClaudeCliAdapter extends LlmAdapter {
     // readline is created here, and the raw progress listener attached in the same tick, so
     // stdout is never resumed before readline is listening. Attaching the listener first would
     // put the stream in flowing mode and lose the head of the turn.
+    if (aborted) child.kill('SIGKILL');            // cancelled before the spawn settled
+    else if (signal) {
+      onAbort = () => {
+        aborted = true;
+        trace('aborted by caller: killing the CLI');
+        child.kill('SIGKILL');
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
     const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
     child.stdout.on('data', rearm);
     rearm();
@@ -145,6 +164,9 @@ class ClaudeCliAdapter extends LlmAdapter {
       // Our own kill is named as such, with the idle duration. Anything else (including a
       // SIGKILL from outside this process) reports the raw exit and must not be dressed up as
       // a timeout, or a crash gets misdiagnosed as a slow turn.
+      // A cancelled turn is not a failing CLI, and must not be dressed up as an idle timeout:
+      // the child produced nothing because we killed it.
+      if (aborted) throw new LlmError('claude CLI turn aborted by caller', 'ABORTED');
       if (killedIdle) {
         throw new Error(
           `claude CLI killed after ${idleLabel} with no output (idle timeout)` +
@@ -159,6 +181,7 @@ class ClaudeCliAdapter extends LlmAdapter {
       for (const chunk of finalChunks(state)) yield chunk;
     } finally {
       await media.cleanup();
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
       clearTimeout(timer);
       if (child.exitCode === null) child.kill('SIGKILL');
     }

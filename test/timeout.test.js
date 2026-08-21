@@ -8,7 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, chmod, rm, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ClaudeCliAdapter, resolveOptions } from '../src/index.js';
@@ -113,4 +114,68 @@ test('a non-zero exit still reports its code and stderr, not a timeout', async (
   assert.match(error.message, /claude CLI exited 3/);
   assert.match(error.message, /boom: credential expired/);
   assert.doesNotMatch(error.message, /idle timeout/, 'a real failure must not be mislabelled');
+});
+
+test('Stop kills the CLI: an aborted turn does not leave the child running', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-claude-abort-'));
+  const pidFile = join(dir, 'pid');
+  const stub = join(dir, 'slow.mjs');
+  await writeFile(stub, `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+process.stdin.resume();
+setInterval(() => {}, 1000);            // never finishes on its own
+`);
+  await chmod(stub, 0o755);
+
+  const controller = new AbortController();
+  const adapter = new ClaudeCliAdapter(resolveOptions({ command: stub, timeoutMs: 0 }));
+  const stream = adapter.stream({
+    model: 'claude-opus-5',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+    signal: controller.signal,
+  });
+
+  const drained = (async () => { for await (const _ of stream) { /* nothing arrives */ } })();
+  // Wait for the child to exist, then abort as the Stop button does.
+  for (let i = 0; i < 50 && !existsSync(pidFile); i += 1) await new Promise((r) => setTimeout(r, 40));
+  const pid = Number(await readFile(pidFile, 'utf8'));
+  assert.ok(pid > 0, 'the stub should have started');
+  controller.abort();
+
+  // Bounded on purpose. Without the kill the stub runs forever, and an unbounded await turns a
+  // regression into a hung suite instead of a failed test — which is exactly what happened once.
+  const verdict = await Promise.race([
+    drained.then(() => 'resolved', (e) => String(e?.message ?? e)),
+    new Promise((r) => setTimeout(() => r('TIMED OUT: the turn never ended after abort'), 5000)),
+  ]);
+  assert.match(verdict, /aborted by caller/, 'the turn reports cancellation, not a crash');
+
+  let alive = true;
+  for (let i = 0; i < 50 && alive; i += 1) {
+    await new Promise((r) => setTimeout(r, 40));
+    try { process.kill(pid, 0); } catch { alive = false; }
+  }
+  if (alive) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+  assert.equal(alive, false, 'the CLI child must not outlive the turn that was stopped');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('a turn with no signal behaves exactly as before', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-claude-nosignal-'));
+  const stub = join(dir, 'quick.mjs');
+  await writeFile(stub, `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  process.stdout.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', usage: {} }) + '\\n');
+  process.exit(0);
+});
+`);
+  await chmod(stub, 0o755);
+  const adapter = new ClaudeCliAdapter(resolveOptions({ command: stub }));
+  const seen = [];
+  for await (const c of adapter.stream({ model: 'm', messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }] })) seen.push(c.type);
+  assert.ok(seen.includes('finish'));
+  await rm(dir, { recursive: true, force: true });
 });
