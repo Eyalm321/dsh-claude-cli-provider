@@ -120,13 +120,76 @@ test('a tool call is forwarded when the harness owns the tool loop', async () =>
   assert.ok(out.some((c) => c.type === 'block-start' && c.blockType === 'tool-call'));
 });
 
-test('a tool call is SWALLOWED when Claude owns the loop — it already ran it', async () => {
+test('a tool call is never FORWARDED when Claude owns the loop — it already ran it', async () => {
   const { translateEvent } = await import('../src/translate.js');
   const state = { nextIndex: 0, ownsToolLoop: false };
   const out = translateEvent({ type: 'assistant', message: { content: [
     { type: 'tool_use', id: 't1', name: 'mcp__dsh__dsh_tasks_list', input: {} },
   ] } }, state);
-  assert.deepEqual(out, [], 'forwarding it makes the harness wait for a result that never comes');
+  // The hazard is a tool-call chunk, not output as such: forwarding one makes the harness wait
+  // for a result that never comes. Observing the call is harmless and is now the default.
+  assert.ok(!out.some((c) => c.blockType === 'tool-call' || c.type === 'tool-call-delta'),
+    'forwarding it makes the harness wait for a result that never comes');
+});
+
+test('the call is observed, so the move appears in the log', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: false };
+  const out = translateEvent({ type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git status' } },
+  ] } }, state);
+  const text = out.find((c) => c.type === 'reasoning-delta')?.text ?? '';
+  assert.match(text, /Bash/);
+  assert.match(text, /git status/, 'a single string argument reads bare, not as JSON');
+});
+
+test('observeTools:false keeps the old silence', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: false, observeTools: false };
+  const out = translateEvent({ type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git status' } },
+  ] } }, state);
+  assert.deepEqual(out, []);
+});
+
+test('a tool RESULT is observed too — a move without its outcome is half a record', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: false };
+  const out = translateEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'nothing to commit' }] },
+  ] } }, state);
+  assert.match(out.find((c) => c.type === 'reasoning-delta').text, /nothing to commit/);
+});
+
+test('a failed tool result is marked failed, not reported as ordinary output', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: false };
+  const out = translateEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 't1', is_error: true, content: [{ type: 'text', text: 'permission denied' }] },
+  ] } }, state);
+  assert.match(out.find((c) => c.type === 'reasoning-delta').text, /failed[\s\S]*permission denied/);
+});
+
+test('tool results are NOT observed when the harness owns the loop — it gets the real thing', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: true };
+  const out = translateEvent({ type: 'user', message: { content: [
+    { type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'x' }] },
+  ] } }, state);
+  assert.deepEqual(out, []);
+});
+
+test('long arguments are clipped, keeping the tool name and saying how much was cut', async () => {
+  const { describeToolUse, OBSERVE_LIMIT } = await import('../src/translate.js');
+  const line = describeToolUse({ name: 'Write', input: { content: 'x'.repeat(OBSERVE_LIMIT + 250) } });
+  assert.match(line, /^Write: /);
+  assert.match(line, /\[250 more chars\]$/);
+});
+
+test('an observation never becomes input on a later turn', async () => {
+  const { blockText } = await import('../src/translate.js');
+  assert.equal(blockText({ type: 'reasoning', text: '↪ Bash: git status' }), '',
+    'replaying observed tool logs would inflate every later prompt with a duplicate transcript');
 });
 
 test('text still flows while tool calls are swallowed', async () => {
