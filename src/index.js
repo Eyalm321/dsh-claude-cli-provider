@@ -53,7 +53,7 @@ class ClaudeCliAdapter extends LlmAdapter {
     const trace = process.env.CLAUDE_CLI_TRACE
       ? (m) => { try { require('node:fs').appendFileSync(process.env.CLAUDE_CLI_TRACE, `${Date.now()} ${m}\n`); } catch {} }
       : () => {};
-    const { command, timeoutMs, cwd, extraArgs, isolateTools } = this.options;
+    const { command, timeoutMs, cwd, extraArgs, isolateTools, observeTools } = this.options;
     // `claude -p` is itself an agent: left alone it runs ITS OWN tool loop with
     // ITS OWN MCP servers, ignoring the tool schemas dsh passed us. That produces
     // confusing "Claude requested permissions to use mcp__..." failures inside a
@@ -92,7 +92,8 @@ class ClaudeCliAdapter extends LlmAdapter {
       env: { ...process.env, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' },
     });
 
-    const state = { nextIndex: 0, usage: undefined, stopReason: undefined, sawResult: false, errorText: undefined , ownsToolLoop: isolated };
+    const state = { nextIndex: 0, usage: undefined, stopReason: undefined, sawResult: false, errorText: undefined , ownsToolLoop: isolated,
+      observeTools: options.observeTools ?? observeTools };
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += String(d); });
 
@@ -172,6 +173,10 @@ export function resolveOptions(config = {}) {
     timeoutMs: config.timeoutMs ?? 600_000,
     cwd: config.cwd ?? '',
     isolateTools: config.isolateTools ?? true,
+    // When Claude owns the tool loop its work is invisible to the harness: a request and a
+    // reply with nothing in between. Recording its calls is the default, because an action
+    // nothing recorded is indistinguishable from one that never happened.
+    observeTools: config.observeTools ?? true,
     extraArgs: config.extraArgs ?? [],
     models: config.models?.length ? config.models : DEFAULT_MODELS,
   };

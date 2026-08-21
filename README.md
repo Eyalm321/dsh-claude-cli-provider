@@ -122,6 +122,16 @@ in `settings.yaml`, or run the profile under its own `DSH_HOME`.
   metered models. Pair it with `extraArgs: ['--dangerously-skip-permissions']`, or the tool loop
   stops at the first approval prompt in non-interactive mode.
 
+    **`observeTools` (default `true`) makes that mode legible.** With Claude running its own
+    loop a turn of real work produces no session events at all: the log shows a request, then a
+    reply, and nothing about the files read or the commands run. An action nothing recorded is
+    indistinguishable from one that never happened. Each `tool_use` and `tool_result` Claude
+    emits is therefore recorded as a *reasoning* block — visible in the log and in any UI, never
+    a `tool-call` chunk, because forwarding one asks the harness to execute what Claude has
+    already run and the turn then hangs. Arguments and results clip at 800 characters and say
+    how much was cut. `blockText()` ignores reasoning, so observations never re-enter a later
+    prompt: the log grows, the context does not. Set `observeTools: false` for silence.
+
   Either way the boundary is the same one: Claude never sees dsh's tool schemas. You are choosing
   whether it brings its own.
 
