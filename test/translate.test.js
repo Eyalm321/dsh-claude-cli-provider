@@ -202,3 +202,12 @@ test('text still flows while tool calls are swallowed', async () => {
   assert.equal(out.filter((c) => c.type === 'text-delta')[0].text, '2 open tasks.');
   assert.ok(!out.some((c) => c.blockType === 'tool-call'));
 });
+
+test('a user message that is not a tool result is not reported as one', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: false };
+  const out = translateEvent({ type: 'user', message: { content: [
+    { type: 'text', text: 'a plain user turn, not the outcome of anything' },
+  ] } }, state);
+  assert.deepEqual(out, [], 'observing it would put a fabricated tool outcome in the log');
+});
