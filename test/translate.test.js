@@ -211,3 +211,21 @@ test('a user message that is not a tool result is not reported as one', async ()
   ] } }, state);
   assert.deepEqual(out, [], 'observing it would put a fabricated tool outcome in the log');
 });
+
+test('a tool call leads with the argument that is the action, not the commentary', async () => {
+  const { describeToolUse } = await import('../src/translate.js');
+  const line = describeToolUse({ name: 'Bash', input: { command: 'free -g', description: 'Show memory' } });
+  assert.equal(line, 'Bash: free -g', 'the human-facing description buries the command');
+});
+
+test('other arguments are named rather than dropped', async () => {
+  const { describeToolUse } = await import('../src/translate.js');
+  const line = describeToolUse({ name: 'Edit', input: { file_path: '/tmp/a', old_string: 'x', new_string: 'y' } });
+  assert.match(line, /^Edit: \/tmp\/a \(\+old_string, new_string\)$/);
+});
+
+test('a tool with no recognisable primary argument keeps its full JSON', async () => {
+  const { describeToolUse } = await import('../src/translate.js');
+  const line = describeToolUse({ name: 'Weird', input: { alpha: 1, beta: 2 } });
+  assert.match(line, /^Weird: \{"alpha":1,"beta":2\}$/);
+});

@@ -31,6 +31,9 @@ export function usageOf(u = {}) {
 /** How much of a tool argument or result is worth keeping in the log. */
 export const OBSERVE_LIMIT = 800;
 
+/** Argument names that carry the action itself, most specific first. */
+export const PRIMARY = ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt', 'content'];
+
 /** Trim to `limit`, saying how much was cut rather than trailing off into an ellipsis. */
 export function clip(text, limit = OBSERVE_LIMIT) {
   const s = String(text ?? '');
@@ -52,6 +55,16 @@ export function describeToolUse(block) {
   const keys = input && typeof input === 'object' ? Object.keys(input) : [];
   if (keys.length === 1 && typeof input[keys[0]] === 'string') {
     return `${name}: ${clip(input[keys[0]])}`;
+  }
+  // Most tools have one argument that IS the action and others that merely describe it —
+  // Bash carries `command` plus a `description` written for a human. Showing the raw JSON
+  // buries the command inside the commentary, so lead with the argument that matters and
+  // append the rest only when there is more worth knowing.
+  const lead = PRIMARY.find((k) => typeof input[k] === 'string' && input[k]);
+  if (lead) {
+    const rest = keys.filter((k) => k !== lead && k !== 'description');
+    const tail = rest.length ? ` (+${rest.join(', ')})` : '';
+    return `${name}: ${clip(input[lead], OBSERVE_LIMIT - tail.length)}${tail}`;
   }
   return `${name}: ${clip(safeJson(input))}`;
 }
