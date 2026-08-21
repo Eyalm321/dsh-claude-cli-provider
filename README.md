@@ -123,6 +123,8 @@ share no code — the seams between them are the harness's own.
 | **dsh-claude-cli-provider** *(this one)* | Claude on a subscription as a model route — and, with `isolateTools: false`, as an orchestrator above the harness |
 | [dsh-headless-resume](https://github.com/Eyalm321/dsh-headless-resume) | makes one-shot sessions durable, so goals and history survive a process exit |
 | [dsh-telegram-inbox](https://github.com/Eyalm321/dsh-telegram-inbox) | a Telegram channel where one chat is one durable agent session |
+| [dsh-whatsapp-inbox](https://github.com/Eyalm321/dsh-whatsapp-inbox) | WhatsApp over Twilio, polled — no public endpoint |
+| [dsh-mcp-bridge](https://github.com/Eyalm321/dsh-mcp-bridge) | harness capabilities as MCP tools for any client |
 
 The three compose: the inbox resumes a chat, the resume helper keeps that chat's state
 honest across restarts, and this provider decides which tier answers it. A useful split is
