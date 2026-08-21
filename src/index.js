@@ -44,13 +44,17 @@ class ClaudeCliAdapter extends LlmAdapter {
   }
 
   async *stream(options) {
-    const { command, timeoutMs, cwd, extraArgs } = this.options;
+    const { command, timeoutMs, cwd, extraArgs, isolateTools } = this.options;
     // `claude -p` is itself an agent: left alone it runs ITS OWN tool loop with
     // ITS OWN MCP servers, ignoring the tool schemas dsh passed us. That produces
     // confusing "Claude requested permissions to use mcp__..." failures inside a
     // dsh turn. So by default we strip Claude's tooling and use it as a pure
     // reasoning/text tier; dsh's own runtime (DeepSeek et al) owns tool execution.
-    const isolate = options.isolateTools
+    // Per-call wins over adapter config; adapter config is what a profile actually sets.
+    // (These were read from the wrong object until 2026-08-20, so the adapter setting was
+    // silently ignored and Claude always kept its own tools.)
+    const isolated = options.isolateTools ?? isolateTools;
+    const isolate = isolated
       ? ['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']
       : [];
     const args = [

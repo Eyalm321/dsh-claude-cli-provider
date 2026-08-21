@@ -17,3 +17,10 @@ test('resolveOptions defaults are sane', async () => {
   assert.ok(o.timeoutMs >= 60_000);
   assert.ok(o.models.some((m) => m.id === 'claude-opus-5[1m]'));
 });
+
+test('adapter-level isolateTools reaches the spawned command', async () => {
+  const { resolveOptions } = await import('../src/index.js');
+  assert.equal(resolveOptions({}).isolateTools, true, 'isolation is the default');
+  assert.equal(resolveOptions({ isolateTools: false }).isolateTools, false);
+  assert.deepEqual(resolveOptions({ extraArgs: ['--x'] }).extraArgs, ['--x']);
+});

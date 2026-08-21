@@ -88,12 +88,43 @@ export function finalChunks(state) {
 }
 
 /** Flatten dsh Messages into a single prompt for the CLI's one-shot print mode. */
+/**
+ * Flatten one tool result into text.
+ *
+ * Tool results carry a block ARRAY, not a string. `String(content)` on that yields
+ * "[object Object]" — which is what Claude was being handed for every tool result in the
+ * transcript, and it noticed. Text blocks render as their text; anything else is kept as
+ * JSON so the information survives rather than becoming a placeholder.
+ */
+export function renderToolResult(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => (typeof c === 'string' ? c : c?.type === 'text' ? (c.text ?? '') : safeJson(c)))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return safeJson(content);
+}
+
+function safeJson(value) {
+  try { return JSON.stringify(value); } catch { return ''; }
+}
+
+/** The text a single content block contributes to the rendered prompt. */
+export function blockText(b) {
+  if (b?.type === 'text') return b.text ?? '';
+  if (b?.type === 'tool-result') return renderToolResult(b.content);
+  return '';
+}
+
 export function renderPrompt(messages = [], system) {
   const parts = [];
   if (system) parts.push(`<system>\n${system}\n</system>`);
   for (const m of messages) {
     const text = (m.content ?? [])
-      .map((b) => (b.type === 'text' ? b.text : b.type === 'tool-result' ? String(b.content ?? '') : ''))
+      .map(blockText)
       .filter(Boolean)
       .join('\n');
     if (!text) continue;

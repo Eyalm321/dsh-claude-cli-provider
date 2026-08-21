@@ -91,3 +91,22 @@ test('renderPrompt includes system and assistant turns', () => {
   assert.match(p, /<assistant>\nyo\n<\/assistant>/);
   assert.match(p, /hi/);
 });
+
+test('tool results render their content, never "[object Object]"', async () => {
+  const { renderToolResult, blockText, renderPrompt } = await import('../src/translate.js');
+  assert.equal(renderToolResult([{ type: 'text', text: 'files: 7' }]), 'files: 7');
+  assert.equal(renderToolResult('plain'), 'plain');
+  assert.equal(renderToolResult(null), '');
+  assert.equal(renderToolResult([{ type: 'image', data: 'x' }]), '{"type":"image","data":"x"}');
+  assert.equal(blockText({ type: 'tool-result', content: [{ type: 'text', text: 'ok' }] }), 'ok');
+
+  const out = renderPrompt([{ role: 'user', content: [{ type: 'tool-result', content: [{ type: 'text', text: 'RESULT' }] }] }]);
+  assert.match(out, /RESULT/);
+  assert.doesNotMatch(out, /\[object Object\]/);
+});
+
+test('a circular tool result degrades to empty rather than throwing', async () => {
+  const { renderToolResult } = await import('../src/translate.js');
+  const loop = { a: 1 }; loop.self = loop;
+  assert.equal(renderToolResult(loop), '');
+});
