@@ -7,6 +7,7 @@
  * tier costs subscription usage instead of metered API tokens.
  */
 import { spawn } from 'node:child_process';
+import { collectImages, materialise, describeImages } from './images.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 import { createInterface } from 'node:readline';
@@ -27,9 +28,12 @@ const DEFAULT_MODELS = [
 ];
 
 class ClaudeCliAdapter extends LlmAdapter {
-  constructor(options) {
+  constructor(options, deps = {}) {
     super();
     this.options = options;
+    // Supplied by apply(): reads bytes for an ImageAttachmentRef. Without it, images
+    // are reported as unavailable rather than silently dropped.
+    this.readImage = deps.readImage;
   }
 
   providerInfo(provider) {
@@ -71,6 +75,14 @@ class ClaudeCliAdapter extends LlmAdapter {
       ...extraArgs,
     ];
 
+    // Images arrive as opaque attachment refs; claude -p takes text. Write the bytes to a
+    // private per-turn directory and name the paths in the prompt — Claude Code reads image
+    // files with its own tools, which is exactly the non-isolated mode.
+    const media = await materialise(collectImages(options.messages), this.readImage);
+    if (media.files.length || media.failed) {
+      trace(`images: ${media.files.length} materialised, ${media.failed} unreadable`);
+    }
+
     trace(`isolated=${isolated} optionsIsolate=${options.isolateTools} adapterIsolate=${isolateTools} tools=${(options.tools||[]).length}`);
     trace(`spawn ${args.join(' ').slice(0,160)}`);
     const child = spawn(command, args, {
@@ -89,7 +101,8 @@ class ClaudeCliAdapter extends LlmAdapter {
       : undefined;
 
     // one-shot prompt on stdin, then EOF
-    child.stdin.end(renderPrompt(options.messages, options.system));
+    const described = describeImages(media.files, media.failed);
+    child.stdin.end(renderPrompt(options.messages, options.system) + (described ? `\n\n${described}` : ''));
 
     const exited = new Promise((resolve) => child.on('close', (code) => resolve(code)));
 
@@ -111,6 +124,7 @@ class ClaudeCliAdapter extends LlmAdapter {
       }
       for (const chunk of finalChunks(state)) yield chunk;
     } finally {
+      await media.cleanup();
       if (timer) clearTimeout(timer);
       if (child.exitCode === null) child.kill('SIGKILL');
     }
@@ -130,7 +144,16 @@ export function resolveOptions(config = {}) {
 
 export function apply(ctx, config) {
   const options = resolveOptions(config);
-  const adapter = new ClaudeCliAdapter(options);
+  // The attachment service is resolved lazily: it is composed by the host and may register
+  // after this plugin. Resolving per call also means a deployment without attachments simply
+  // reports images as unavailable instead of failing to mount.
+  const readImage = async (ref) => {
+    const store = ctx.get('attachments');
+    if (!store?.readImage) throw new Error('no attachment service');
+    const out = await store.readImage(ref);
+    return out?.data ?? out;
+  };
+  const adapter = new ClaudeCliAdapter(options, { readImage });
 
   // Shape is fixed by dsh-llm's commit(): provider/displayName/settingsNs/settingsPath,
   // each non-empty. (Not {id,name,models} — that throws INVALID_DIRECTORY.)
