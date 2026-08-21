@@ -179,3 +179,40 @@ process.stdin.on('end', () => {
   assert.ok(seen.includes('finish'));
   await rm(dir, { recursive: true, force: true });
 });
+
+test('a turn nobody is reading any more does not leave the CLI running', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-claude-abandon-'));
+  const pidFile = join(dir, 'pid');
+  const stub = join(dir, 'chatty.mjs');
+  // Emits forever: only the watchdog can end this, never the child itself.
+  await writeFile(stub, `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+process.stdin.resume();
+setInterval(() => {
+  process.stdout.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'tick' }] } }) + '\\n');
+}, 50);
+`);
+  await chmod(stub, 0o755);
+
+  const adapter = new ClaudeCliAdapter(resolveOptions({ command: stub, timeoutMs: 0, consumerStallMs: 300 }));
+  const stream = adapter.stream({
+    model: 'm', messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }],
+  });
+  // Take one chunk and walk away, exactly as the harness does when a turn is cancelled:
+  // no return(), no abort, just nobody asking for the next chunk.
+  const it = stream[Symbol.asyncIterator]();
+  await it.next();
+  for (let i = 0; i < 40 && !existsSync(pidFile); i += 1) await new Promise((r) => setTimeout(r, 40));
+  const pid = Number(await readFile(pidFile, 'utf8'));
+  assert.ok(pid > 0);
+
+  let alive = true;
+  for (let i = 0; i < 60 && alive; i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    try { process.kill(pid, 0); } catch { alive = false; }
+  }
+  if (alive) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  assert.equal(alive, false, 'an abandoned turn must not leave the CLI spending tokens');
+  await rm(dir, { recursive: true, force: true });
+});
