@@ -1,6 +1,6 @@
 {
   "name": "dsh-claude-cli-provider",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Claude via the local `claude` CLI (subscription OAuth) as a DeepSeek Harness LLM provider \u2014 no Anthropic API key.",
   "license": "MIT",
   "type": "module",
@@ -11,6 +11,7 @@
     "src",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
