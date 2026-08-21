@@ -7,6 +7,8 @@
  * tier costs subscription usage instead of metered API tokens.
  */
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 import { createInterface } from 'node:readline';
 import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import { translateEvent, finalChunks, renderPrompt } from './translate.js';
@@ -44,6 +46,9 @@ class ClaudeCliAdapter extends LlmAdapter {
   }
 
   async *stream(options) {
+    const trace = process.env.CLAUDE_CLI_TRACE
+      ? (m) => { try { require('node:fs').appendFileSync(process.env.CLAUDE_CLI_TRACE, `${Date.now()} ${m}\n`); } catch {} }
+      : () => {};
     const { command, timeoutMs, cwd, extraArgs, isolateTools } = this.options;
     // `claude -p` is itself an agent: left alone it runs ITS OWN tool loop with
     // ITS OWN MCP servers, ignoring the tool schemas dsh passed us. That produces
@@ -66,6 +71,8 @@ class ClaudeCliAdapter extends LlmAdapter {
       ...extraArgs,
     ];
 
+    trace(`isolated=${isolated} optionsIsolate=${options.isolateTools} adapterIsolate=${isolateTools} tools=${(options.tools||[]).length}`);
+    trace(`spawn ${args.join(' ').slice(0,160)}`);
     const child = spawn(command, args, {
       cwd: cwd || process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -73,7 +80,7 @@ class ClaudeCliAdapter extends LlmAdapter {
       env: { ...process.env, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' },
     });
 
-    const state = { nextIndex: 0, usage: undefined, stopReason: undefined, sawResult: false, errorText: undefined };
+    const state = { nextIndex: 0, usage: undefined, stopReason: undefined, sawResult: false, errorText: undefined , ownsToolLoop: isolated };
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += String(d); });
 
@@ -93,7 +100,8 @@ class ClaudeCliAdapter extends LlmAdapter {
         if (!trimmed || trimmed[0] !== '{') continue;
         let event;
         try { event = JSON.parse(trimmed); } catch { continue; }  // tolerate non-JSON noise
-        for (const chunk of translateEvent(event, state)) yield chunk;
+        trace(`recv ${event.type}${event.subtype ? '/' + event.subtype : ''}`);
+        for (const chunk of translateEvent(event, state)) { trace(`emit ${chunk.type}`); yield chunk; }
       }
 
       const code = await exited;

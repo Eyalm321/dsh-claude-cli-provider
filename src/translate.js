@@ -51,6 +51,15 @@ export function translateEvent(event, state) {
         out.push({ type: 'reasoning-delta', index, text: block.thinking });
         out.push({ type: 'block-end', index, block: { type: 'reasoning', text: block.thinking } });
       } else if (block.type === 'tool_use') {
+        // Only forward a tool call when the harness is the one that will run it.
+        //
+        // With tools isolated, `claude -p` has none of its own, so any tool_use it emits
+        // belongs to the harness and must be passed along. With tools NOT isolated, Claude
+        // owns its loop and has ALREADY executed this call itself — forwarding it asks the
+        // harness to execute a tool it does not have, and the turn then waits for a result
+        // that will never arrive. That is two executors for one call, and it was the cause
+        // of tool-using turns hanging for minutes while non-tool turns returned in seconds.
+        if (state.ownsToolLoop === false) continue;
         const index = state.nextIndex++;
         const args = JSON.stringify(block.input ?? {});
         out.push({ type: 'block-start', index, blockType: 'tool-call' });

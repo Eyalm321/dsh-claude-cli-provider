@@ -57,6 +57,17 @@ moment the profile moves — you get `Cannot find package 'dsh-claude-cli-provid
 real base class; a stub silently drops inherited methods and you get
 `adapter.providerRetryPolicy is not a function` at plugin load.
 
+## Installing from a local checkout
+
+Use **`link:`**, not `file:`. pnpm *copies* a `file:` dependency into its store, so edits to
+your checkout never reach the running harness — the profile keeps executing the copy made at
+install time. This is unusually costly here, because the symptom is a fix that "does not work"
+rather than a fix that is missing.
+
+```jsonc
+{ "dependencies": { "dsh-claude-cli-provider": "link:/path/to/checkout" } }
+```
+
 ## Config
 
 | key | default | meaning |

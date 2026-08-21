@@ -110,3 +110,32 @@ test('a circular tool result degrades to empty rather than throwing', async () =
   const loop = { a: 1 }; loop.self = loop;
   assert.equal(renderToolResult(loop), '');
 });
+
+test('a tool call is forwarded when the harness owns the tool loop', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: true };
+  const out = translateEvent({ type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 't1', name: 'read', input: { path: '/x' } },
+  ] } }, state);
+  assert.ok(out.some((c) => c.type === 'block-start' && c.blockType === 'tool-call'));
+});
+
+test('a tool call is SWALLOWED when Claude owns the loop — it already ran it', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: false };
+  const out = translateEvent({ type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 't1', name: 'mcp__dsh__dsh_tasks_list', input: {} },
+  ] } }, state);
+  assert.deepEqual(out, [], 'forwarding it makes the harness wait for a result that never comes');
+});
+
+test('text still flows while tool calls are swallowed', async () => {
+  const { translateEvent } = await import('../src/translate.js');
+  const state = { nextIndex: 0, ownsToolLoop: false };
+  const out = translateEvent({ type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 't1', name: 'x', input: {} },
+    { type: 'text', text: '2 open tasks.' },
+  ] } }, state);
+  assert.equal(out.filter((c) => c.type === 'text-delta')[0].text, '2 open tasks.');
+  assert.ok(!out.some((c) => c.blockType === 'tool-call'));
+});
