@@ -93,10 +93,20 @@ in `settings.yaml`, or run the profile under its own `DSH_HOME`.
   permission prompts, ignoring the schemas dsh passed. Inside a dsh turn that shows up as
   `Claude requested permissions to use mcp__…, but you haven't granted it yet` and no result.
   So this plugin defaults to **`isolateTools: true`**, passing
-  `--strict-mcp-config --mcp-config '{"mcpServers":{}}'` to strip Claude's tooling.
-  Use Claude to plan, review, and decide; let dsh's native runtime (DeepSeek et al.) execute — it
-  drives dsh's MCP, memory, and agent-team tools correctly. Set `isolateTools: false` only if you
-  actually want Claude Code's own agent behaviour inside the turn.
+  `--strict-mcp-config --mcp-config '{"mcpServers":{}}'` to strip Claude's tooling, and dsh's
+  native runtime (DeepSeek et al.) executes — it drives dsh's MCP, memory and agent-team tools
+  correctly.
+
+  **`isolateTools: false` is the more interesting setting, not merely the escape hatch.** Claude
+  keeps its own tools — read, edit, bash, its MCP servers — and can then act as an orchestrator
+  *above* dsh rather than a text tier inside it: it plans, reads and reviews on the subscription,
+  and shells out to whatever command-line front doors your deployment exposes to dispatch work to
+  metered models. Pair it with `extraArgs: ['--dangerously-skip-permissions']`, or the tool loop
+  stops at the first approval prompt in non-interactive mode.
+
+  Either way the boundary is the same one: Claude never sees dsh's tool schemas. You are choosing
+  whether it brings its own.
+
 - **Claude brings its own context.** The CLI loads your `~/.claude/CLAUDE.md`, output style, and
   memory dir. That is usually helpful, occasionally surprising (it may follow *its* memory
   conventions rather than dsh's).
