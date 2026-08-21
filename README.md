@@ -112,6 +112,23 @@ in `settings.yaml`, or run the profile under its own `DSH_HOME`.
   conventions rather than dsh's).
 - Requires a logged-in `claude` CLI on the same host (`claude setup-token` / `/login`).
 
+## Part of a set
+
+Three independent plugins, each usable on its own, that together make a headless DeepSeek
+Harness behave like a persistent assistant. They were written one problem at a time and
+share no code — the seams between them are the harness's own.
+
+| plugin | what it adds |
+|---|---|
+| **dsh-claude-cli-provider** *(this one)* | Claude on a subscription as a model route — and, with `isolateTools: false`, as an orchestrator above the harness |
+| [dsh-headless-resume](https://github.com/Eyalm321/dsh-headless-resume) | makes one-shot sessions durable, so goals and history survive a process exit |
+| [dsh-telegram-inbox](https://github.com/Eyalm321/dsh-telegram-inbox) | a Telegram channel where one chat is one durable agent session |
+
+The three compose: the inbox resumes a chat, the resume helper keeps that chat's state
+honest across restarts, and this provider decides which tier answers it. A useful split is
+Claude for reading, planning and review — free on a subscription — with a metered model
+doing implementation.
+
 ## Test
 
 ```bash
