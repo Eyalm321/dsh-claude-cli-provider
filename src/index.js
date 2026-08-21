@@ -53,7 +53,7 @@ class ClaudeCliAdapter extends LlmAdapter {
     const trace = process.env.CLAUDE_CLI_TRACE
       ? (m) => { try { require('node:fs').appendFileSync(process.env.CLAUDE_CLI_TRACE, `${Date.now()} ${m}\n`); } catch {} }
       : () => {};
-    const { command, timeoutMs, cwd, extraArgs, isolateTools, observeTools } = this.options;
+    const { command, timeoutMs, cwd, extraArgs, isolateTools, observeTools, consumerStallMs } = this.options;
     // `claude -p` is itself an agent: left alone it runs ITS OWN tool loop with
     // ITS OWN MCP servers, ignoring the tool schemas dsh passed us. That produces
     // confusing "Claude requested permissions to use mcp__..." failures inside a
@@ -114,6 +114,27 @@ class ClaudeCliAdapter extends LlmAdapter {
     let aborted = signal?.aborted === true;
     let onAbort;
 
+    // The harness can end a turn without telling the adapter. Cancelling from the UI aborts the
+    // turn, but it neither aborts the signal below nor calls return() on this generator: our code
+    // is simply parked at a `yield` nobody will pull from again, so the `finally` never runs and
+    // the child keeps going. Measured on 2026-08-21 — turn/end kind=aborted at 14:59:29 with the
+    // CLI still alive four minutes later, still parented by the web service, still spending
+    // tokens. So abandonment is detected directly: if a chunk has been handed over and the
+    // consumer has not come back for the next one, nobody is listening any more.
+    let awaitingConsumer = false;
+    let handedOverAt = 0;
+    let abandoned = false;
+    const stallMs = Number(consumerStallMs ?? 30_000);
+    const stallTimer = stallMs > 0
+      ? setInterval(() => {
+        if (!awaitingConsumer || Date.now() - handedOverAt < stallMs) return;
+        abandoned = true;
+        trace(`consumer stopped reading ${stallMs}ms ago: killing the CLI`);
+        child.kill('SIGKILL');
+      }, 1000)
+      : undefined;
+    stallTimer?.unref?.();
+
     let killedIdle = false;
     let timer;
     const idleLabel = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`;
@@ -157,7 +178,13 @@ class ClaudeCliAdapter extends LlmAdapter {
         let event;
         try { event = JSON.parse(trimmed); } catch { continue; }  // tolerate non-JSON noise
         trace(`recv ${event.type}${event.subtype ? '/' + event.subtype : ''}`);
-        for (const chunk of translateEvent(event, state)) { trace(`emit ${chunk.type}`); yield chunk; }
+        for (const chunk of translateEvent(event, state)) {
+          trace(`emit ${chunk.type}`);
+          awaitingConsumer = true;
+          handedOverAt = Date.now();
+          yield chunk;
+          awaitingConsumer = false;
+        }
       }
 
       const { code, signal } = await exited;
@@ -167,6 +194,7 @@ class ClaudeCliAdapter extends LlmAdapter {
       // A cancelled turn is not a failing CLI, and must not be dressed up as an idle timeout:
       // the child produced nothing because we killed it.
       if (aborted) throw new LlmError('claude CLI turn aborted by caller', 'ABORTED');
+      if (abandoned) throw new LlmError('claude CLI turn abandoned by the caller', 'ABORTED');
       if (killedIdle) {
         throw new Error(
           `claude CLI killed after ${idleLabel} with no output (idle timeout)` +
@@ -182,6 +210,7 @@ class ClaudeCliAdapter extends LlmAdapter {
     } finally {
       await media.cleanup();
       if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+      clearInterval(stallTimer);
       clearTimeout(timer);
       if (child.exitCode === null) child.kill('SIGKILL');
     }
@@ -200,6 +229,8 @@ export function resolveOptions(config = {}) {
     // reply with nothing in between. Recording its calls is the default, because an action
     // nothing recorded is indistinguishable from one that never happened.
     observeTools: config.observeTools ?? true,
+    // How long a handed-over chunk may sit unread before the turn is treated as abandoned.
+    consumerStallMs: config.consumerStallMs ?? 30_000,
     extraArgs: config.extraArgs ?? [],
     models: config.models?.length ? config.models : DEFAULT_MODELS,
   };
