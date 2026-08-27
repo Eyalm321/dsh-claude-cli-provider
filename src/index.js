@@ -40,12 +40,26 @@ class ClaudeCliAdapter extends LlmAdapter {
     return { id: provider, name: 'Claude (local CLI, subscription)' };
   }
 
-  async listModels() {
+  /**
+   * The model catalog, in the shape the harness validates.
+   *
+   * Two things it rejects outright, and both were wrong here: every entry must carry `provider`
+   * matching the route it was asked about, and the modality key is `inputModalities` — this
+   * returned `modalities`, which is simply ignored. The whole catalog is discarded on the first
+   * bad entry, so the UI listed no Claude models at all while turns kept working, because
+   * `stream()` never consults the catalog. A capability can be broken and invisible for as long
+   * as nobody opens the picker.
+   *
+   * Images are declared because this provider materialises them for `claude -p`: saying
+   * text-only would be a negative capability claim, not a missing one.
+   */
+  async listModels(provider = PROVIDER) {
     return this.options.models.map((m) => ({
+      provider,
       id: m.id,
       name: m.name,
       contextWindow: m.contextWindow,
-      modalities: ['text'],
+      inputModalities: ['text', 'image'],
     }));
   }
 
